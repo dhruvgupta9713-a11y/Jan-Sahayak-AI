@@ -1,4 +1,7 @@
 import os
+# Fix protobuf compiler descriptor compatibility issues
+os.environ["PROTOCOL_BUFFERS_PYTHON_IMPLEMENTATION"] = "python"
+
 import streamlit as st
 from dotenv import load_dotenv
 
