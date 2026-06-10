@@ -14,10 +14,32 @@ load_dotenv()
 UPLOAD_DIR = "uploads"
 CHROMA_DIR = "chroma_db"
 
-# Load API key from environment — no user input needed
-API_KEY = os.getenv("GOOGLE_API_KEY", "")
+# Load API key from secrets, environment, or user override
+API_KEY = ""
+
+# 1. Try loading from streamlit secrets
+try:
+    if "GOOGLE_API_KEY" in st.secrets:
+        API_KEY = st.secrets["GOOGLE_API_KEY"]
+    elif "google_api_key" in st.secrets:
+        API_KEY = st.secrets["google_api_key"]
+except Exception:
+    pass
+
+# 2. Try loading from environment variables
+if not API_KEY:
+    API_KEY = os.getenv("GOOGLE_API_KEY", "")
+
 if API_KEY == "your_api_key_here":
     API_KEY = ""
+
+# Initialize API key override in session state if not already set
+if "api_key_override" not in st.session_state:
+    st.session_state.api_key_override = ""
+
+# 3. Use user override if provided
+if not API_KEY and st.session_state.api_key_override:
+    API_KEY = st.session_state.api_key_override
 
 # Set environment for underlying langchain libraries
 if API_KEY:
@@ -675,6 +697,20 @@ with st.sidebar:
     </div>
     """, unsafe_allow_html=True)
     
+    # Show input field if API key is missing
+    if not API_KEY or st.session_state.api_key_override:
+        st.markdown('<div class="section-header">API Configuration</div>', unsafe_allow_html=True)
+        user_key = st.text_input(
+            "Enter Gemini API Key",
+            type="password",
+            value=st.session_state.api_key_override,
+            help="Get your key from Google AI Studio: https://aistudio.google.com/",
+            placeholder="AIzaSy..."
+        )
+        if user_key != st.session_state.api_key_override:
+            st.session_state.api_key_override = user_key
+            st.rerun()
+            
     st.markdown("---")
     
     # ---- Document Management ----
@@ -691,7 +727,7 @@ with st.sidebar:
     
     if process_btn:
         if not API_KEY:
-            st.error("API Key not configured in .env file!")
+            st.error("API Key not configured! Please set it in secrets, environment, or the sidebar input.")
         elif not uploaded_files:
             st.warning("Please upload at least one PDF file first.")
         else:
@@ -844,12 +880,50 @@ with tab_chat:
                     st.rerun()
 
     # ---- Chat Engine ----
-    is_ready = API_KEY and num_files > 0
+    # The chatbot is active if we have an API key and at least some indexed chunks
+    is_ready = bool(API_KEY) and chunk_count > 0
 
     if not API_KEY:
         st.markdown("""
         <div class="lock-warning">
-            <b>API Key Missing:</b> Please configure your Google Gemini API Key in the <code>.env</code> file to activate the chatbot.
+            <b>API Key Missing:</b> Please configure your Google Gemini API Key in the <code>.env</code> file (locally) or Streamlit Secrets (for deployment), or enter it in the sidebar to activate the chatbot.
+        </div>
+        """, unsafe_allow_html=True)
+    elif num_files == 0:
+        st.markdown("""
+        <div class="lock-warning" style="background: rgba(99, 102, 241, 0.1); border-left: 4px solid #6366f1; color: #a5b4fc; border: 1px solid rgba(99, 102, 241, 0.15);">
+            <b>No Government Schemes Indexed:</b> The database is empty because no PDF documents have been uploaded yet.
+            <br><br>
+            You can:
+            <ol>
+                <li>Upload scheme PDFs in the sidebar and click <b>"Process & Index PDFs"</b></li>
+                <li>Or generate the official demo scheme PDFs instantly by clicking the button below</li>
+            </ol>
+        </div>
+        """, unsafe_allow_html=True)
+        
+        if st.button("✨ Generate & Load Demo Scheme PDFs", type="primary", use_container_width=True):
+            with st.spinner("Generating demo scheme PDFs..."):
+                try:
+                    import generate_dummy_assets
+                    generate_dummy_assets.ensure_directories([UPLOAD_DIR])
+                    generate_dummy_assets.create_dummy_pdf(os.path.join(UPLOAD_DIR, "scheme_summary.pdf"))
+                    generate_dummy_assets.create_ayushman_bharat_pdf(os.path.join(UPLOAD_DIR, "ayushman_bharat.pdf"))
+                    generate_dummy_assets.create_dummy_video(os.path.join(UPLOAD_DIR, "demo_video.mp4"))
+                    st.session_state.uploaded_files = [
+                        f for f in os.listdir(UPLOAD_DIR) if f.lower().endswith('.pdf')
+                    ]
+                    st.success("Demo PDFs generated successfully! Now click 'Process & Index PDFs' in the sidebar to index them.")
+                    st.rerun()
+                except Exception as e:
+                    st.error(f"Error generating demo PDFs: {str(e)}")
+                    
+    elif chunk_count == 0:
+        st.markdown("""
+        <div class="lock-warning" style="background: rgba(245, 158, 11, 0.1); border-left: 4px solid #f59e0b; color: #fef08a; border: 1px solid rgba(245, 158, 11, 0.15);">
+            <b>Files Detected but Not Indexed:</b> You have uploaded PDF files, but they are not indexed into the database yet.
+            <br><br>
+            Please click the <b>"Process & Index PDFs"</b> button in the sidebar to build the database.
         </div>
         """, unsafe_allow_html=True)
 
