@@ -661,6 +661,9 @@ if "uploaded_files" not in st.session_state:
 if "pending_question" not in st.session_state:
     st.session_state.pending_question = None
 
+if "query_cache" not in st.session_state:
+    st.session_state.query_cache = {}
+
 # Auto-load vector database if API key is available and files exist
 if API_KEY and st.session_state.vector_db is None:
     if os.path.exists(CHROMA_DIR) and len(st.session_state.uploaded_files) > 0:
@@ -810,6 +813,7 @@ with st.sidebar:
             st.session_state.vector_db = None
             st.session_state.uploaded_files = []
             st.session_state.pending_question = None
+            st.session_state.query_cache = {}
             st.success("System reset successfully!")
             st.rerun()
 
@@ -970,48 +974,58 @@ with tab_chat:
             with st.chat_message("user"):
                 st.markdown(user_query)
             st.session_state.chat_history.append({"role": "user", "content": user_query})
-            
+
+            cache = st.session_state.query_cache
+            if user_query in cache:
+                answer = cache[user_query]["answer"]
+                sources = cache[user_query]["sources"]
+            else:
+                with st.chat_message("assistant"):
+                    with st.spinner("Scanning schemes database..."):
+                        chunks_with_scores = chatbot.retrieve_relevant_chunks(
+                            st.session_state.vector_db,
+                            user_query,
+                            k=3
+                        )
+
+                        result = chatbot.generate_answer(
+                            user_query,
+                            chunks_with_scores,
+                            API_KEY
+                        )
+
+                        answer = result["answer"]
+                        sources = result["sources"]
+
+                        if len(cache) >= 30:
+                            cache.pop(next(iter(cache)))
+                        cache[user_query] = {"answer": answer, "sources": sources}
+
             with st.chat_message("assistant"):
-                with st.spinner("Scanning schemes database..."):
-                    chunks_with_scores = chatbot.retrieve_relevant_chunks(
-                        st.session_state.vector_db, 
-                        user_query, 
-                        k=4
-                    )
-                    
-                    result = chatbot.generate_answer(
-                        user_query, 
-                        chunks_with_scores, 
-                        API_KEY
-                    )
-                    
-                    answer = result["answer"]
-                    sources = result["sources"]
-                    
-                    st.markdown(answer)
-                    
-                    if sources:
-                        with st.expander("Verified Source Chunks"):
-                            for idx, src in enumerate(sources):
-                                st.markdown(f"""
-                                <div class="source-container">
-                                    <div class="source-meta">
-                                        <span>
-                                            <span class="verified-badge">✓ Verified</span>
-                                            📄 Source {idx+1}: {src['source']} (Page {src['page']})
-                                        </span>
-                                        <span class="source-badge">Relevance: {src['score']}%</span>
-                                    </div>
-                                    <div class="source-text">{src['content']}</div>
+                st.markdown(answer)
+
+                if sources:
+                    with st.expander("Verified Source Chunks"):
+                        for idx, src in enumerate(sources):
+                            st.markdown(f"""
+                            <div class="source-container">
+                                <div class="source-meta">
+                                    <span>
+                                        <span class="verified-badge">✓ Verified</span>
+                                        📄 Source {idx+1}: {src['source']} (Page {src['page']})
+                                    </span>
+                                    <span class="source-badge">Relevance: {src['score']}%</span>
                                 </div>
-                                """, unsafe_allow_html=True)
-                                
+                                <div class="source-text">{src['content']}</div>
+                            </div>
+                            """, unsafe_allow_html=True)
+
             st.session_state.chat_history.append({
                 "role": "assistant",
                 "content": answer,
                 "sources": sources
             })
-            
+
             st.rerun()
 
 
