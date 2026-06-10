@@ -1,16 +1,15 @@
 import os
-import time
 from langchain_core.messages import SystemMessage, HumanMessage
 from langchain_google_genai import ChatGoogleGenerativeAI
 
-# Model fallback chain — if primary model hits rate limits, try alternatives
+# Use the fastest practical model first and only fall back when needed.
 GEMINI_MODELS = [
     "gemini-2.0-flash",
     "gemini-2.0-flash-lite",
-    "gemini-2.5-flash",
 ]
 
-def retrieve_relevant_chunks(vector_store, query: str, k: int = 4):
+
+def retrieve_relevant_chunks(vector_store, query: str, k: int = 3):
     """
     Retrieves the top k most relevant chunks along with their similarity scores.
     Uses ChromaDB similarity search with relevance scores.
@@ -96,7 +95,9 @@ def generate_answer(query: str, retrieved_chunks: list, google_api_key: str) -> 
             llm = ChatGoogleGenerativeAI(
                 model=model_name,
                 google_api_key=google_api_key,
-                temperature=0.0  # Zero temperature for deterministic, factual responses
+                temperature=0.0,
+                request_timeout=30,
+                max_output_tokens=512,
             )
             
             response = llm.invoke(messages)
@@ -139,7 +140,6 @@ def generate_answer(query: str, retrieved_chunks: list, google_api_key: str) -> 
             # If rate limited or model not found, try next model after a short pause
             if "429" in str(e) or "RESOURCE_EXHAUSTED" in error_str or "RATE" in error_str or "404" in str(e) or "NOT_FOUND" in error_str:
                 print(f"Error on {model_name} ({type(e).__name__}), trying next model...")
-                time.sleep(2)
                 continue
             else:
                 # Non-retryable error — don't try other models
